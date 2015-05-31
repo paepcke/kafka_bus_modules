@@ -23,7 +23,6 @@ class LearnerHomeworkHistory(object):
     '''
     
     module_topic   = 'learner_homework_history'
-    kafka_bus_host = 'mono.stanford.edu'
 
     def __init__(self, topic=None, user='dataman', passwd=''):
         '''
@@ -45,10 +44,9 @@ class LearnerHomeworkHistory(object):
         
         self.requestDeliveryMethod = functools.partial(self.requestHomeworkHistory)        
         
-        # Create a BusAdapter instance, telling it that its
-        # server(s) are on machine mono.stanford.edu:
+        # Create a BusAdapter instance:
         
-        self.bus = BusAdapter(kafkaHost=LearnerHomeworkHistory.kafka_bus_host)
+        self.bus = BusAdapter()
 
         # Tell the bus that you are interested in the topic 'example_use',
         # and want callbacks to self.exampleDeliveryMethod whenever
