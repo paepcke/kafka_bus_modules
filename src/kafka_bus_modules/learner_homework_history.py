@@ -11,7 +11,6 @@ import getpass
 import json
 import os
 import sys
-import time
 
 from kafka_bus_python.kafka_bus import BusAdapter
 from pymysql_utils.pymysql_utils import MySQLDB
@@ -23,7 +22,9 @@ class LearnerHomeworkHistory(object):
     '''
     
     module_topic   = 'learner_homework_history'
-    kafka_bus_host = 'mono.stanford.edu'
+    #*****kafka_bus_host = 'mono.stanford.edu'
+    kafka_bus_host = 'localhost'
+    mysql_port_local = 5555
 
     def __init__(self, topic=None, user='dataman', passwd=''):
         '''
@@ -32,7 +33,11 @@ class LearnerHomeworkHistory(object):
         if topic is None:
             topic = LearnerHomeworkHistory.module_topic
             
-        self.mysqldb = MySQLDB(host='127.0.0.1', port=5555, user=user, passwd=passwd, db='Edx')
+        self.mysqldb = MySQLDB(host='127.0.0.1', 
+                               port=LearnerHomeworkHistory.mysql_port_local, 
+                               user=user, 
+                               passwd=passwd, 
+                               db='Edx')
         
         # The following statement is needed only 
         # if your callback is a method (rather than a top 
@@ -115,21 +120,21 @@ class LearnerHomeworkHistory(object):
 
         # Must have a learner req_key:
         try:
-            reqKey = msgDict['request']['req_key']
+            reqKey = msgDict['req_key']
         except KeyError:
-            self.returnError("Error: req_key not provided in %s" % str(msgDict), 'NULL')
+            self.returnError('NULL', "Error: req_key not provided in %s" % str(msgDict))
             return
         
         # Must have a learner LTI ID:
         try:
-            ltiId = msgDict['request']['lti_id']
+            ltiId = msgDict['content']['lti_id']
         except KeyError:
-            self.returnError("Error: lti not provided in %s" % str(msgDict), reqKey)
+            self.returnError(reqKey, "Error: lti not provided in %s" % str(msgDict))
             return
             
         # May have a courseId:
         try:
-            courseId = msgDict['request']['course_id']
+            courseId = msgDict['content']['course_id']
         except KeyError:
             courseId = None
         
@@ -143,8 +148,14 @@ class LearnerHomeworkHistory(object):
         
         resultArr = self.executeLearnerQuery(ltiId, courseId)
         # print (str(resultArr))
+
+        try:        
+            respJSON = self.buildResponse(resultArr, reqKey)
+        except TypeError as e:
+            # Response could not be JSONized
+            self.returnError(reqKey, `e`)
+            return
         
-        respJSON = self.buildResponse(resultArr, reqKey)
         self.bus.publish(respJSON, LearnerHomeworkHistory.module_topic)
         
     def executeLearnerQuery(self, ltiLearnerId, courseId=None):
@@ -173,10 +184,31 @@ class LearnerHomeworkHistory(object):
         resIt = self.mysqldb.query(homeworkQuery)
         resultArr = []
         for res in resIt:
+            try:
+                res['first_submit'] = res['first_submit'].isoformat()
+            except:
+                pass
+            try:
+                res['last_submit'] = res['last_submit'].isoformat()
+            except:
+                pass
+                 
             resultArr.append(res)
         return resultArr
     
     def buildResponse(self, arrOfDicts, reqKey):
+        '''
+        Builds a JSON response message from an array
+        of dicts. The dicts are MySQL return hits. 
+        
+        :param arrOfDicts:
+        :type arrOfDicts:
+        :param reqKey:
+        :type reqKey:
+        :return JSON string ready to publish to the bus
+        :rtype string
+        :raise TypeError if arrOfDicts contains non-JSONizable elements.
+        '''
         responseMsg = {'resp_key'   : reqKey,
                        'status'     : 'OK',
                        'content'    : arrOfDicts,
@@ -193,6 +225,15 @@ class LearnerHomeworkHistory(object):
         self.bus.publish(errMsgJSON, LearnerHomeworkHistory.module_topic)
 
     def makeJSON(self, pythonStructure):
+        '''
+        Turns a Python structure into JSON.
+        
+        :param pythonStructure: structure to convert
+        :type pythonStructure: any
+        :return JSON
+        :rtype string
+        :raise TypeError if structure contains JSONizable elements.
+        '''
         io = cStringIO.StringIO()
         json.dump(pythonStructure, io)
         val = io.getvalue()

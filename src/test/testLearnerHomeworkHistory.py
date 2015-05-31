@@ -20,7 +20,7 @@ class TestLearnerHomeworkHistory(unittest.TestCase):
 
     def testReceiveRequest(self):
         msg = json.dumps({'req_key' : 'abcd',
-                          'request' : {'lti_id': '0925c14e89bda0c0c3ad41e36335674b',
+                          'content' : {'lti_id': '0925c14e89bda0c0c3ad41e36335674b',
                                        'course_id' : ''},
                           'time'    : datetime.datetime.utcnow().isoformat()
                           }) 
