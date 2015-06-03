@@ -21,6 +21,8 @@ class LearnerHomeworkHistory(object):
     classdocs
     '''
     
+    MYSQL_PORT_LOCAL = 5555
+    
     module_topic   = 'learner_homework_history'
 
     def __init__(self, topic=None, user='dataman', passwd=''):
@@ -31,7 +33,7 @@ class LearnerHomeworkHistory(object):
             topic = LearnerHomeworkHistory.module_topic
             
         self.mysqldb = MySQLDB(host='127.0.0.1', 
-                               port=LearnerHomeworkHistory.mysql_port_local, 
+                               port=LearnerHomeworkHistory.MYSQL_PORT_LOCAL, 
                                user=user, 
                                passwd=passwd, 
                                db='Edx')
@@ -114,11 +116,20 @@ class LearnerHomeworkHistory(object):
             self.bus.logError('Received msg with invalid JSON: %s (%s)' % (msgText, `e`))
             return
 
-        # Must have a learner req_key:
+        # Must have a learner message id:
         try:
-            reqKey = msgDict['req_key']
+            reqId = msgDict['id']
         except KeyError:
-            self.returnError('NULL', "Error: req_key not provided in %s" % str(msgDict))
+            self.returnError('NULL', "Error: message type not provided in %s" % str(msgDict))
+            return
+
+        # Must have a learner type == 'req'
+        try:
+            reqKey = msgDict['type']
+            if reqKey != 'req':
+                return
+        except KeyError:
+            self.returnError('NULL', "Error: message type not provided in %s" % str(msgDict))
             return
         
         # Must have a learner LTI ID:
@@ -130,9 +141,9 @@ class LearnerHomeworkHistory(object):
             
         # May have a courseId:
         try:
-            courseId = msgDict['content']['course_id']
+            course_display_name = msgDict['content']['course_display_name']
         except KeyError:
-            courseId = None
+            course_display_name = None
         
         # Get an array of dicts, each dict being one MySQL record:
         #    first_submit          [a <datetime obj>]
@@ -142,22 +153,17 @@ class LearnerHomeworkHistory(object):
         #    num_attempts
         #    percent_grade
         
-        resultArr = self.executeLearnerQuery(ltiId, courseId)
+        resultArr = self.executeLearnerQuery(ltiId, course_display_name)
         # print (str(resultArr))
 
-        try:        
-            respJSON = self.buildResponse(resultArr, reqKey)
-        except TypeError as e:
-            # Response could not be JSONized
-            self.returnError(reqKey, `e`)
-            return
+        respMsg = self.buildResponse(resultArr, reqId)
         
-        self.bus.publish(respJSON, LearnerHomeworkHistory.module_topic)
+        self.bus.publish(respMsg, LearnerHomeworkHistory.module_topic)
         
-    def executeLearnerQuery(self, ltiLearnerId, courseId=None):
+    def executeLearnerQuery(self, ltiLearnerId, course_display_name=None):
         
-        if courseId is None or len(courseId) == 0:
-            courseId = '%' 
+        if course_display_name is None or len(course_display_name) == 0:
+            course_display_name = '%' 
             
         # Get anon_screen_name in separate query. This
         # will speed the subsequent main query up tremendously:
@@ -175,7 +181,7 @@ class LearnerHomeworkHistory(object):
     			        "percent_grade " +\
     			   "FROM ActivityGrade " +\
     			  "WHERE anon_screen_name = '%s' " % anonScreenName +\
-                    "AND course_display_name LIKE '%s' " % courseId +\
+                    "AND course_display_name LIKE '%s' " % course_display_name +\
     			    "AND module_type = 'problem';"
         resIt = self.mysqldb.query(homeworkQuery)
         resultArr = []
@@ -192,25 +198,25 @@ class LearnerHomeworkHistory(object):
             resultArr.append(res)
         return resultArr
     
-    def buildResponse(self, arrOfDicts, reqKey):
+    def buildResponse(self, arrOfDicts, reqId):
         '''
         Builds a JSON response message from an array
         of dicts. The dicts are MySQL return hits. 
         
         :param arrOfDicts:
         :type arrOfDicts:
-        :param reqKey:
-        :type reqKey:
-        :return JSON string ready to publish to the bus
+        :param reqId:
+        :type reqId:
+        :return Dict ready to publish to the bus in the message 'content' field.
         :rtype string
-        :raise TypeError if arrOfDicts contains non-JSONizable elements.
         '''
-        responseMsg = {'resp_key'   : reqKey,
+
+        responseMsg = {'id'         : reqId,
                        'status'     : 'OK',
                        'content'    : arrOfDicts,
                        'time'       : datetime.datetime.utcnow().isoformat()
                        }
-        return self.makeJSON(responseMsg)
+        return responseMsg
                        
     def returnError(self, req_key, errMsg):
         errMsg = {'resp_key'    : req_key,
@@ -294,7 +300,7 @@ if __name__ == '__main__':
     #sys.exit()
     #************
     try:
-        learnerHomeworkServer = LearnerHomeworkHistory(user='dataman', passwd=pwd)
+        learnerHomeworkServer = LearnerHomeworkHistory(user=user, passwd=pwd)
     finally:
         try:
             learnerHomeworkServer.close()
