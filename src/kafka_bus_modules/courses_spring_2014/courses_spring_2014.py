@@ -4,6 +4,7 @@ Created on May 26, 2015
 @author: paepcke
 '''
 import argparse
+import cStringIO
 import functools
 import getpass
 import json
@@ -14,24 +15,25 @@ from kafka_bus_python.kafka_bus import BusAdapter
 from pymysql_utils.pymysql_utils import MySQLDB
 
 
-class LearnerAssignmentHistory(object):
+class CoursesGivenQuarter(object):
     '''
-    classdocs
+    Bus module that queries datastage for course information,
+    given academic year, and quarter.
     '''
     
     MYSQL_PORT_LOCAL = 5555
     
-    module_topic   = 'learner_homework_history'
+    module_topic   = 'course_listing'
 
     def __init__(self, topic=None, user='dataman', passwd=''):
         '''
-        Instantiated for each request coming in on the bus:
+        Instantiated for each incoming bus message
         '''
         if topic is None:
-            topic = LearnerAssignmentHistory.module_topic
+            topic = CoursesGivenQuarter.module_topic
             
         self.mysqldb = MySQLDB(host='127.0.0.1', 
-                               port=LearnerAssignmentHistory.MYSQL_PORT_LOCAL, 
+                               port=CoursesGivenQuarter.MYSQL_PORT_LOCAL, 
                                user=user, 
                                passwd=passwd, 
                                db='Edx')
@@ -62,46 +64,31 @@ class LearnerAssignmentHistory(object):
         
         while True:
             # do anything you like
-            self.bus.waitForMessage(LearnerAssignmentHistory.module_topic)
+            self.bus.waitForMessage(CoursesGivenQuarter.module_topic)
 
     def requestCoursesForQuarter(self, topicName, msgText, msgOffset):
         '''
         This method is called whenever a message in topic
-        'learner_homework_history' is published by anyone on the bus.
+        'course_listing' is published by anyone on the bus.
         The msgText should have the JSON format:
         
-        
-            {'id'      : 'abcd',
-             'type'    : 'req',
-             'content' : {'lti_id': '0925c14e89bda0c0c3ad41e36335674b',
-                          'course_display_name' : ''},  <----optional
+            {'req_key' : 'abcd'
+             'content' : {'academic_year' : '2014',
+                          'quarter'       : 'spring'},
              'time'    : '2015-05-27T18:12:22.706204',
-            }
-            
-        Note that the publish() method on the publisher side will have
-        taken care of the id, type, and time fields.           
+                          }           
         
-        The request key is caller-generated. The response message
-        will have that same key in its resp_key field. Used by
-        caller to identify its response.
-
         Response will be of the form:
-            {'id'          : 'abcd',
-             'type'        : 'resp',
+            {'resp_key'    : 'abcd',
              'status'      : 'OK'
              'content'     : *****
             }
             
         Or, in case of error:
-            {'id'          : 'abcd',
-             'type'        : 'resp',
+            {'resp_key'    : 'abcd',
              'status'      : 'ERROR'
              'content'     : '<error msg'>
             }
-            
-        Again, when constructing our response below, we only need to
-        pass the 'content' value to publish(); the id and time are added
-        by publish().
         
         :param topicName: name of topic to which the arriving msg belongs: always learner_homework_history
         :type topicName: string
@@ -144,88 +131,79 @@ class LearnerAssignmentHistory(object):
             self.bus.logError('Received msg without a content field: %s' % str(msgText))
             return
         
-        # Must have a learner LTI ID:
+        # Must have an academic year:
         try:
-            ltiId = contentDict['lti_id']
+            academicYear = contentDict['academic_year']
         except KeyError:
-            self.returnError(reqKey, "Error: learner LTI ID not provided in %s" % str(msgDict))
-            self.bus.logError('Received msg without LTI ID in content field: %s' % str(msgText))            
+            self.returnError(reqKey, "Error: academic year not provided in %s" % str(msgDict))
+            self.bus.logError('Received msg without academic year in content field: %s' % str(msgText))            
             return
             
-        # May have a courseId:
+        # Must have a quarter:
         try:
-            course_display_name = contentDict['course_display_name']
+            quarter = contentDict['quarter']
         except KeyError:
-            course_display_name = None
+            self.returnError(reqKey, "Error: quarter not provided in %s" % str(msgDict))
+            self.bus.logError('Received msg without quarter in content field: %s' % str(msgText))            
+            return
         
         # Get an array of dicts, each dict being one MySQL record:
-        #    first_submit          [a <datetime obj>]
-        #    last_submit           [a <datetime obj>]
-        #    course_display_name
-        #    resource_display_name 
-        #    num_attempts
-        #    percent_grade
+        #    course_display_name,
+        #    course_catalog_name,
+        #    is_internal
         
-        resultArr = self.executeCourseInfoQuery(ltiId, course_display_name)
+        resultArr = self.executeCourseInfoQuery(academicYear, quarter)
+        
+        # Turn result into an HTML table:
+        htmlRes = self.buildHtmlTableFromQueryResult(resultArr)
 
         # Note that we pass the message type 'resp' 
         # to publish(), and that we specify that the
         # msg ID is to be the same as the incoming request.
-        
-        self.bus.publish(str(resultArr), 
-                         LearnerAssignmentHistory.module_topic,
+
+        self.bus.publish(htmlRes, 
+                         CoursesGivenQuarter.module_topic,
                          msgType='resp',
                          msgId=reqId)
         
-    def executeCourseInfoQuery(self, ltiLearnerId, course_display_name=None):
+    def executeCourseInfoQuery(self, academicYear, quarter):
         
-        if course_display_name is None or len(course_display_name) == 0:
-            course_display_name = '%' 
-            
-        # Get anon_screen_name in separate query. This
-        # will speed the subsequent main query up tremendously:
+        homeworkQuery = "SELECT course_display_name," +\
+    			        "course_catalog_name," +\
+    			        "is_internal " +\
+    			   "FROM CourseInfo " +\
+    			  "WHERE academic_year = '%s' " % academicYear +\
+                    " AND quarter = '%s' " % quarter +\
+                    ";"
+
         try:
-            anonScreenName = self.mysqldb.query("SELECT idExt2Anon('%s');" % ltiLearnerId).next()
+            resIt = self.mysqldb.query(homeworkQuery)
         except Exception as e:
-            raise ValueError('Could not convert %s to anon_screen_name (%s)' % (ltiLearnerId, `e`))
-        
-        homeworkQuery = "SELECT first_submit," +\
-                        "last_submit," +\
-    			        "course_display_name," +\
-    			        "resource_display_name," +\
-    			        "module_id," +\
-    			        "num_attempts," +\
-    			        "percent_grade " +\
-    			   "FROM ActivityGrade " +\
-    			  "WHERE anon_screen_name = '%s' " % anonScreenName +\
-                    "AND course_display_name LIKE '%s' " % course_display_name +\
-    			    "AND module_type = 'problem';"
-        resIt = self.mysqldb.query(homeworkQuery)
+            self.returnError("Error: Call to database returned an error: '%s'" % `e`)
+            self.bus.logError("Call to MySQL returned an error: '%s'" % `e`)
+            return
+            
         resultArr = []
         for res in resIt:
-            # Two fields in the results will be 
-            # Python datetime objects; turn those
-            # into ISO time strings to make the
-            # JSONification work in our return
-            # publish method:
-            try:
-                res['first_submit'] = res['first_submit'].isoformat()
-            except:
-                pass
-            try:
-                res['last_submit'] = res['last_submit'].isoformat()
-            except:
-                pass
-                 
             resultArr.append(res)
+            
         return resultArr
     
     def returnError(self, req_id, errMsg):
         self.bus.publish(errMsg, 
-                         LearnerAssignmentHistory.module_topic,
+                         CoursesGivenQuarter.module_topic,
                          msgId=req_id, 
                          msgType='resp')
 
+    def buildHtmlTableFromQueryResult(self, resTupleArr):
+        htmlStr   = '<table border=1><tr><td><b>Course</b></td><td><b>Description</b></td><td><b>Internal-Only</b></td></tr>'
+        strResArr = []
+        for (courseDisplayName, courseCatalogName, isInternal) in resTupleArr:
+            strResArr.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" %
+                             (courseDisplayName, courseCatalogName, isInternal))
+        htmlStr = htmlStr + ' '.join(strResArr) + '</table>'
+        return htmlStr
+            
     def close(self):
         try:
             self.mysqldb.close()
@@ -284,7 +262,7 @@ if __name__ == '__main__':
     #sys.exit()
     #************
     try:
-        courseLister = LearnerAssignmentHistory(user=user, passwd=pwd)
+        courseLister = CoursesGivenQuarter(user=user, passwd=pwd)
     finally:
         try:
             courseLister.close()

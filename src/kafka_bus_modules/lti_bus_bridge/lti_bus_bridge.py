@@ -26,6 +26,9 @@ class LtiBusBridgeProducer(tornado.web.RequestHandler):
 
     LTI_LISTEN_PORT          = 6005
     SYNCHRONOUS_CALL_TIMEOUT = 40 # seconds
+    
+    COMMON_LTI_CUSTOM_KEYS   = ['custom_topic_name',
+                                'custom_synchronous_call']
 
     # Needs to be a class variable so
     # that only the first instance does
@@ -64,6 +67,8 @@ class LtiBusBridgeProducer(tornado.web.RequestHandler):
         paramNames = postBodyForm.keys()
         paramNames.sort()
 
+        # Pull out the LTI built-in, and custom parameters
+        # that may be common with calls to all modules:
         # The [0]'s below: LTI delivers the values of its
         # key/value pairs as an array, so our get() defaults
         # are arrays as well, and the [0] will always work:
@@ -73,23 +78,34 @@ class LtiBusBridgeProducer(tornado.web.RequestHandler):
         synchronousCall     = postBodyForm.get('custom_synchronous_call', [False])[0]
         if topicName is None:
             self.logError('Invocation from LMS with missing bus topic name.')
-#         self.bus.publish(json.dumps({'course_display_name' : course_display_name,
-#                                      'lti_id' : ltiUid}),
-#                          topicName=topicName)
-            respStr = self.bus.publish({'course_display_name' : course_display_name,
-                                        'lti_id' : ltiUid},
-                                        topicName=topicName,
-                                        sync=synchronousCall,
-                                        timeout=LtiBusBridgeProducer.SYNCHRONOUS_CALL_TIMEOUT)
+            self.writeToLtiDisplay('<b>Error</b>: your LTI was not set up to pass the required topic name to the LTI-->SchoolBus bridge.')
+            return
 
+        # Every module may have additional custom parameters
+        # that were added when the respective LTI was registered
+        # with the LMS:
+        
+        # Build the payload (i.e. msg content) dict, initializing with the 
+        # key/value pairs that every bus module receives:
+        payLoadDict = {'course_display_name' : course_display_name,
+                       'lti_id' : ltiUid}
+        
+        # Now add the custom ones:
+        for (key, value) in postBodyForm.items():
+            if key.startswith('custom_') and key not in LtiBusBridgeProducer.COMMON_LTI_CUSTOM_KEYS:
+                # Found a module-specific custom parm.
+                # The [0] is again b/c LTI values are 
+                # passed in arrays;
+                # Strip the leading 'custom_':
+                payLoadDict[key[len('custom_'):]] = value[0]
+        
         try:
-            respStr = self.bus.publish({'course_display_name' : course_display_name,
-                                        'lti_id' : ltiUid},
-                                        topicName=topicName,
-                                        sync=synchronousCall,
-                                        timeout=LtiBusBridgeProducer.SYNCHRONOUS_CALL_TIMEOUT)
+            respStr = self.bus.publish(payLoadDict,
+                                       topicName=topicName,
+                                       sync=synchronousCall,
+                                       timeout=LtiBusBridgeProducer.SYNCHRONOUS_CALL_TIMEOUT)
         except SyncCallTimedOut:
-            respStr = '<b>Error:</b>: No response when querying on topic %s' % topicName
+            respStr = '<b>Error:</b>: No response within %d seconds when querying on topic %s' % (LtiBusBridgeProducer.SYNCHRONOUS_CALL_TIMEOUT, topicName)
         if synchronousCall:
             self.writeToLtiDisplay(str(respStr))
 
