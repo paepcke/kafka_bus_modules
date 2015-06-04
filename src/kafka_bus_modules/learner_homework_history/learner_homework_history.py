@@ -5,7 +5,6 @@ Created on May 26, 2015
 '''
 import argparse
 import cStringIO
-import datetime
 import functools
 import getpass
 import json
@@ -110,17 +109,18 @@ class LearnerHomeworkHistory(object):
         :type msgOffset: int
         '''
         try:
-            # Import the JSON payload into a dict:
+            # Import the message into a dict:
             msgDict = json.loads(msgText)
-        except ValueError as e:
-            self.bus.logError('Received msg with invalid JSON: %s (%s)' % (msgText, `e`))
+        except ValueError:
+            self.bus.logError('Received msg with invalid wrapping JSON: %s (%s)' % str(msgText))
             return
 
         # Must have a learner message id:
         try:
             reqId = msgDict['id']
         except KeyError:
-            self.returnError('NULL', "Error: message type not provided in %s" % str(msgDict))
+            self.returnError('NULL', "Error: message type not provided in an incoming request.")
+            self.bus.logError("Message type not provided in %s" % str(msgDict))
             return
 
         # Must have a learner type == 'req'
@@ -129,19 +129,30 @@ class LearnerHomeworkHistory(object):
             if reqKey != 'req':
                 return
         except KeyError:
-            self.returnError('NULL', "Error: message type not provided in %s" % str(msgDict))
+            self.returnError(reqId, "Error: message type not provided in %s" % str(msgDict))
+            self.bus.logError('Received msg without a type field: %s' % str(msgText))
+            return
+        
+        # The content field should be legal JSON; make a
+        # dict from it:
+        try:
+            contentDict = msgDict['content']
+        except KeyError:
+            self.returnError(reqKey, "Error: no content field provided in %s" % str(msgDict))
+            self.bus.logError('Received msg without a content field: %s' % str(msgText))
             return
         
         # Must have a learner LTI ID:
         try:
-            ltiId = msgDict['content']['lti_id']
+            ltiId = contentDict['lti_id']
         except KeyError:
-            self.returnError(reqKey, "Error: lti not provided in %s" % str(msgDict))
+            self.returnError(reqKey, "Error: learner LTI ID not provided in %s" % str(msgDict))
+            self.bus.logError('Received msg without LTI ID in content field: %s' % str(msgText))            
             return
             
         # May have a courseId:
         try:
-            course_display_name = msgDict['content']['course_display_name']
+            course_display_name = contentDict['course_display_name']
         except KeyError:
             course_display_name = None
         
@@ -154,11 +165,11 @@ class LearnerHomeworkHistory(object):
         #    percent_grade
         
         resultArr = self.executeLearnerQuery(ltiId, course_display_name)
-        # print (str(resultArr))
 
-        respMsg = self.buildResponse(resultArr, reqId)
-        
-        self.bus.publish(respMsg, LearnerHomeworkHistory.module_topic)
+        self.bus.publish(str(resultArr), 
+                         LearnerHomeworkHistory.module_topic,
+                         msgType='resp',
+                         msgId=reqId)
         
     def executeLearnerQuery(self, ltiLearnerId, course_display_name=None):
         
@@ -198,33 +209,11 @@ class LearnerHomeworkHistory(object):
             resultArr.append(res)
         return resultArr
     
-    def buildResponse(self, arrOfDicts, reqId):
-        '''
-        Builds a JSON response message from an array
-        of dicts. The dicts are MySQL return hits. 
-        
-        :param arrOfDicts:
-        :type arrOfDicts:
-        :param reqId:
-        :type reqId:
-        :return Dict ready to publish to the bus in the message 'content' field.
-        :rtype string
-        '''
-
-        responseMsg = {'id'         : reqId,
-                       'status'     : 'OK',
-                       'content'    : arrOfDicts,
-                       'time'       : datetime.datetime.utcnow().isoformat()
-                       }
-        return responseMsg
-                       
-    def returnError(self, req_key, errMsg):
-        errMsg = {'resp_key'    : req_key,
-                  'status'      : 'ERROR',
-                  'content'     : errMsg
-                 }
-        errMsgJSON = self.makeJSON(errMsg)
-        self.bus.publish(errMsgJSON, LearnerHomeworkHistory.module_topic)
+    def returnError(self, req_id, errMsg):
+        self.bus.publish(errMsg, 
+                         LearnerHomeworkHistory.module_topic,
+                         msgId=req_id, 
+                         msgType='resp')
 
     def makeJSON(self, pythonStructure):
         '''
