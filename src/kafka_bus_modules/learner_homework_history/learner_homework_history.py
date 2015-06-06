@@ -1,11 +1,10 @@
+#!/usr/bin/env python
 '''
 Created on May 26, 2015
 
 @author: paepcke
 '''
 import argparse
-import cStringIO
-import datetime
 import functools
 import getpass
 import json
@@ -16,22 +15,24 @@ from kafka_bus_python.kafka_bus import BusAdapter
 from pymysql_utils.pymysql_utils import MySQLDB
 
 
-class LearnerHomeworkHistory(object):
+class LearnerAssignmentHistory(object):
     '''
     classdocs
     '''
+    
+    MYSQL_PORT_LOCAL = 5555
     
     module_topic   = 'learner_homework_history'
 
     def __init__(self, topic=None, user='dataman', passwd=''):
         '''
-        Constructor
+        Instantiated for each request coming in on the bus:
         '''
         if topic is None:
-            topic = LearnerHomeworkHistory.module_topic
+            topic = LearnerAssignmentHistory.module_topic
             
         self.mysqldb = MySQLDB(host='127.0.0.1', 
-                               port=LearnerHomeworkHistory.mysql_port_local, 
+                               port=LearnerAssignmentHistory.MYSQL_PORT_LOCAL, 
                                user=user, 
                                passwd=passwd, 
                                db='Edx')
@@ -45,7 +46,7 @@ class LearnerHomeworkHistory(object):
         # our callback method that has the leading 'self' parameter built 
         # in. The process is called function currying:
         
-        self.requestDeliveryMethod = functools.partial(self.requestHomeworkHistory)        
+        self.requestDeliveryMethod = functools.partial(self.requestCoursesForQuarter)        
         
         # Create a BusAdapter instance:
         
@@ -62,43 +63,46 @@ class LearnerHomeworkHistory(object):
         
         while True:
             # do anything you like
-            self.bus.waitForMessage(LearnerHomeworkHistory.module_topic)
+            self.bus.waitForMessage(LearnerAssignmentHistory.module_topic)
 
-    def requestHomeworkHistory(self, topicName, msgText, msgOffset):
+    def requestCoursesForQuarter(self, topicName, msgText, msgOffset):
         '''
         This method is called whenever a message in topic
         'learner_homework_history' is published by anyone on the bus.
         The msgText should have the JSON format:
         
-            {'req_key' : 'abcd'
+        
+            {'id'      : 'abcd',
+             'type'    : 'req',
              'content' : {'lti_id': '0925c14e89bda0c0c3ad41e36335674b',
-                          'course_id' : ''},
+                          'course_display_name' : ''},  <----optional
              'time'    : '2015-05-27T18:12:22.706204',
-                          }           
+            }
+            
+        Note that the publish() method on the publisher side will have
+        taken care of the id, type, and time fields.           
         
         The request key is caller-generated. The response message
         will have that same key in its resp_key field. Used by
         caller to identify its response.
-        
-        The request field contains the request-specific JSON.
-        
-        CourseId may be empty, or missing, in which case stats for the given
-        learner for all classes is returned.
-        
-        Hint: in Python you get the ISO formatted time stamp string via:
-        datetime.datetime.utcnow().isoformat()
-        
+
         Response will be of the form:
-            {'resp_key'    : 'abcd',
+            {'id'          : 'abcd',
+             'type'        : 'resp',
              'status'      : 'OK'
              'content'     : *****
             }
             
         Or, in case of error:
-            {'resp_key'    : 'abcd',
+            {'id'          : 'abcd',
+             'type'        : 'resp',
              'status'      : 'ERROR'
              'content'     : '<error msg'>
             }
+            
+        Again, when constructing our response below, we only need to
+        pass the 'content' value to publish(); the id and time are added
+        by publish().
         
         :param topicName: name of topic to which the arriving msg belongs: always learner_homework_history
         :type topicName: string
@@ -108,31 +112,52 @@ class LearnerHomeworkHistory(object):
         :type msgOffset: int
         '''
         try:
-            # Import the JSON payload into a dict:
+            # Import the message into a dict:
             msgDict = json.loads(msgText)
-        except ValueError as e:
-            self.bus.logError('Received msg with invalid JSON: %s (%s)' % (msgText, `e`))
+        except ValueError:
+            self.bus.logError('Received msg with invalid wrapping JSON: %s (%s)' % str(msgText))
             return
 
-        # Must have a learner req_key:
+        # Must have a learner message id:
         try:
-            reqKey = msgDict['req_key']
+            reqId = msgDict['id']
         except KeyError:
-            self.returnError('NULL', "Error: req_key not provided in %s" % str(msgDict))
+            self.returnError('NULL', "Error: message type not provided in an incoming request.")
+            self.bus.logError("Message type not provided in %s" % str(msgDict))
+            return
+
+        # Must have a learner type == 'req'
+        try:
+            reqKey = msgDict['type']
+            if reqKey != 'req':
+                return
+        except KeyError:
+            self.returnError(reqId, "Error: message type not provided in %s" % str(msgDict))
+            self.bus.logError('Received msg without a type field: %s' % str(msgText))
+            return
+        
+        # The content field should be legal JSON; make a
+        # dict from it:
+        try:
+            contentDict = msgDict['content']
+        except KeyError:
+            self.returnError(reqKey, "Error: no content field provided in %s" % str(msgDict))
+            self.bus.logError('Received msg without a content field: %s' % str(msgText))
             return
         
         # Must have a learner LTI ID:
         try:
-            ltiId = msgDict['content']['lti_id']
+            ltiId = contentDict['lti_id']
         except KeyError:
-            self.returnError(reqKey, "Error: lti not provided in %s" % str(msgDict))
+            self.returnError(reqKey, "Error: learner LTI ID not provided in %s" % str(msgDict))
+            self.bus.logError('Received msg without LTI ID in content field: %s' % str(msgText))            
             return
             
         # May have a courseId:
         try:
-            courseId = msgDict['content']['course_id']
+            course_display_name = contentDict['course_display_name']
         except KeyError:
-            courseId = None
+            course_display_name = None
         
         # Get an array of dicts, each dict being one MySQL record:
         #    first_submit          [a <datetime obj>]
@@ -142,22 +167,21 @@ class LearnerHomeworkHistory(object):
         #    num_attempts
         #    percent_grade
         
-        resultArr = self.executeLearnerQuery(ltiId, courseId)
-        # print (str(resultArr))
+        resultArr = self.executeCourseInfoQuery(ltiId, course_display_name)
 
-        try:        
-            respJSON = self.buildResponse(resultArr, reqKey)
-        except TypeError as e:
-            # Response could not be JSONized
-            self.returnError(reqKey, `e`)
-            return
+        # Note that we pass the message type 'resp' 
+        # to publish(), and that we specify that the
+        # msg ID is to be the same as the incoming request.
         
-        self.bus.publish(respJSON, LearnerHomeworkHistory.module_topic)
+        self.bus.publish(str(resultArr), 
+                         LearnerAssignmentHistory.module_topic,
+                         msgType='resp',
+                         msgId=reqId)
         
-    def executeLearnerQuery(self, ltiLearnerId, courseId=None):
+    def executeCourseInfoQuery(self, ltiLearnerId, course_display_name=None):
         
-        if courseId is None or len(courseId) == 0:
-            courseId = '%' 
+        if course_display_name is None or len(course_display_name) == 0:
+            course_display_name = '%' 
             
         # Get anon_screen_name in separate query. This
         # will speed the subsequent main query up tremendously:
@@ -175,11 +199,16 @@ class LearnerHomeworkHistory(object):
     			        "percent_grade " +\
     			   "FROM ActivityGrade " +\
     			  "WHERE anon_screen_name = '%s' " % anonScreenName +\
-                    "AND course_display_name LIKE '%s' " % courseId +\
+                    "AND course_display_name LIKE '%s' " % course_display_name +\
     			    "AND module_type = 'problem';"
         resIt = self.mysqldb.query(homeworkQuery)
         resultArr = []
         for res in resIt:
+            # Two fields in the results will be 
+            # Python datetime objects; turn those
+            # into ISO time strings to make the
+            # JSONification work in our return
+            # publish method:
             try:
                 res['first_submit'] = res['first_submit'].isoformat()
             except:
@@ -192,50 +221,12 @@ class LearnerHomeworkHistory(object):
             resultArr.append(res)
         return resultArr
     
-    def buildResponse(self, arrOfDicts, reqKey):
-        '''
-        Builds a JSON response message from an array
-        of dicts. The dicts are MySQL return hits. 
-        
-        :param arrOfDicts:
-        :type arrOfDicts:
-        :param reqKey:
-        :type reqKey:
-        :return JSON string ready to publish to the bus
-        :rtype string
-        :raise TypeError if arrOfDicts contains non-JSONizable elements.
-        '''
-        responseMsg = {'resp_key'   : reqKey,
-                       'status'     : 'OK',
-                       'content'    : arrOfDicts,
-                       'time'       : datetime.datetime.utcnow().isoformat()
-                       }
-        return self.makeJSON(responseMsg)
-                       
-    def returnError(self, req_key, errMsg):
-        errMsg = {'resp_key'    : req_key,
-                  'status'      : 'ERROR',
-                  'content'     : errMsg
-                 }
-        errMsgJSON = self.makeJSON(errMsg)
-        self.bus.publish(errMsgJSON, LearnerHomeworkHistory.module_topic)
+    def returnError(self, req_id, errMsg):
+        self.bus.publish(errMsg, 
+                         LearnerAssignmentHistory.module_topic,
+                         msgId=req_id, 
+                         msgType='resp')
 
-    def makeJSON(self, pythonStructure):
-        '''
-        Turns a Python structure into JSON.
-        
-        :param pythonStructure: structure to convert
-        :type pythonStructure: any
-        :return JSON
-        :rtype string
-        :raise TypeError if structure contains JSONizable elements.
-        '''
-        io = cStringIO.StringIO()
-        json.dump(pythonStructure, io)
-        val = io.getvalue()
-        io.close()
-        return val
-    
     def close(self):
         try:
             self.mysqldb.close()
@@ -294,9 +285,9 @@ if __name__ == '__main__':
     #sys.exit()
     #************
     try:
-        learnerHomeworkServer = LearnerHomeworkHistory(user='dataman', passwd=pwd)
+        courseLister = LearnerAssignmentHistory(user=user, passwd=pwd)
     finally:
         try:
-            learnerHomeworkServer.close()
+            courseLister.close()
         except:
             pass
