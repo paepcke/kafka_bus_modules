@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 '''
 Created on Jun 2, 2015
 
@@ -107,7 +108,7 @@ class LtiBusBridgeProducer(tornado.web.RequestHandler):
         except SyncCallTimedOut:
             respStr = '<b>Error:</b>: No response within %d seconds when querying on topic %s' % (LtiBusBridgeProducer.SYNCHRONOUS_CALL_TIMEOUT, topicName)
         if synchronousCall:
-            self.writeToLtiDisplay(str(respStr))
+            self.writeToLtiDisplay(respStr.encode('ascii', 'replace'))
 
     def writeToLtiDisplay(self, htmlTxt):
         
