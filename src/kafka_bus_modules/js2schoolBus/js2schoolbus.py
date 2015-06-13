@@ -5,10 +5,17 @@ Created on Jun 5, 2015
 '''
 import datetime
 import json
+import logging
 import os
+import socket
+from subprocess import CalledProcessError
+import subprocess
 import tornado
+from tornado.httpserver import HTTPServer
 from tornado.websocket import WebSocketHandler
-from tornado.httpserver import HTTPServer;
+
+from kafka_bus_python.kafka_bus import BusAdapter
+
 
 class Js2SchoolBus(WebSocketHandler):
 
@@ -18,6 +25,8 @@ class Js2SchoolBus(WebSocketHandler):
     LOG_LEVEL_ERR   = 1
     LOG_LEVEL_INFO  = 2
     LOG_LEVEL_DEBUG = 3
+    
+    firstInstance = True
 
     def __init__(self, application, request, testing=False ):
         '''
@@ -39,8 +48,8 @@ class Js2SchoolBus(WebSocketHandler):
         self.testing = testing
         self.request = request;
 
-        #self.loglevel = Js2SchoolBus.LOG_LEVEL_DEBUG
-        self.loglevel = Js2SchoolBus.LOG_LEVEL_INFO
+        self.loglevel = Js2SchoolBus.LOG_LEVEL_DEBUG
+        #self.loglevel = Js2SchoolBus.LOG_LEVEL_INFO
         #self.loglevel = Js2SchoolBus.LOG_LEVEL_NONE
 
         # Get and remember the fully qualified domain name
@@ -49,9 +58,15 @@ class Js2SchoolBus(WebSocketHandler):
         # might be behind:
         self.FQDN = self.getFQDN()
 
+        self.bus = BusAdapter()
+
         # Interval between logging the sending of
         # the heartbeat:
         self.latestHeartbeatLogTime = None
+        
+        if Js2SchoolBus.firstInstance:
+            self.bus.logInfo('Starting schoolbus module Js2SchoolBus')
+            Js2SchoolBus.firstInstance = False
 
     def allow_draft76(self):
         '''
@@ -80,18 +95,52 @@ class Js2SchoolBus(WebSocketHandler):
         #print message
         try:
             requestDict = json.loads(message)
-            if requestDict['req'] == 'keepAlive':
+            if requestDict['type'] == 'keepAlive':
                 # Could return live-ping here! But shouldn't
                 # need to, because sending the '.' periodically
                 # during long ops is enough. Sending that dot
                 # will cause the browser to send its keep-alive:
                 return
             else:
-                self.logInfo("request received: %s" % str(message))
+                self.logDebug("js2schoolbus: request received: %s" % str(message))
+                syncCall = requestDict.get('sync', False)
+                try: 
+                    msgId = requestDict['id']
+                except KeyError:
+                    self.writeError('Request msg from browser did not include a message id: %s' % str(message))
+                    self.bus.logError('Request msg from browser did not include a message id: %s' % str(message))
+                    return
+                
+                if (syncCall):
+                    res = self.bus.publish(requestDict['content'], requestDict['topic'], sync=True, msgId=msgId)
+                    self.bus.logDebug("js2schoolbus: about to return result %s" % str(res))
+                    self.write_message(res['content'])
+                else:
+                    self.bus.publish(requestDict['content'], requestDict['topic'], sync=False, msgId=msgId)
+                    return
+
         except Exception as e:
             self.writeError("Bad JSON in request received at server: %s" % `e`)
+            self.logDebug("Bad request: '%s'" % str(message))
 
-        self.logDebug("About to fork thread for request '%s'" % str(requestDict))
+
+    def writeError(self, msg):
+        '''
+        Writes a response to the JS running in the browser
+        that indicates an error. Result action is "error",
+        and "args" is the error message string:
+
+        :param msg: error message to send to browser
+        :type msg: String
+        '''
+        self.logDebug("Sending err to browser: %s" % msg)
+        if not self.testing:
+            errMsg = '{"type" : "js2schoolBusAdmin", "content", "args" : "%s"}' % msg.replace('"', "`")
+            try:
+                self.write_message(errMsg)
+            except IOError as e:
+                self.mainThread.logErr('IOError while writing error to browser; msg attempted to write; "%s" (%s)' % (msg, `e`))
+
 
     def logInfo(self, msg):
         if self.loglevel >= Js2SchoolBus.LOG_LEVEL_INFO:
@@ -104,6 +153,36 @@ class Js2SchoolBus(WebSocketHandler):
     def logDebug(self, msg):
         if self.loglevel >= Js2SchoolBus.LOG_LEVEL_DEBUG:
             print(str(datetime.datetime.now()) + ' debug: ' + msg)
+            
+    def getFQDN(self):
+        '''
+        Obtain true fully qualified domain name of server, as
+        seen from the 'outside' of any router behind which the
+        server may be hiding. Strategy: use shell cmd "wget -q -O- icanhazip.com"
+        to get IP address as seen from the outside. Then use
+        gethostbyaddr() to do reverse DNS lookup.
+
+        @return: this server's fully qualified IP name.
+        @rtype: string
+        @raise ValueError: if either the WAN IP lookup, or the subsequent
+            reverse DNS lookup fail.
+        '''
+
+        try:
+            ip = subprocess.check_output(['wget', '-q', '-O-', 'icanhazip.com'])
+        except CalledProcessError:
+            # Could not get the outside IP address. Fall back
+            # on using the FQDN obtained locally:
+            return socket.getfqdn()
+
+        try:
+            fqdn = socket.gethostbyaddr(ip.strip())[0]
+        except socket.gaierror:
+            raise("ValueError: could not find server's fully qualified domain name from IP address '%s'" % ip.string())
+        except Exception as e:
+            raise("ValueError: could not find server's fully qualified domain: '%s'" % `e`)
+        return fqdn
+            
             
     @classmethod
     def getCertAndKey(self):

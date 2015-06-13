@@ -11,6 +11,7 @@
 function SchoolBus() {
 
     var SCHOOL_BUS_PORT = 6070;
+    var JS_2_SCHOOL_BUS_ADMIN_TOPIC = 'js2schoolBusAdmin';
     var keepAliveTimer = null;
     var keepAliveInterval = 15000; /* 15 sec*/
     var screenContent = "";
@@ -18,65 +19,108 @@ function SchoolBus() {
     var ws = null;
     var timer = null;
     var encryptionPwd = null;
-    var callbackRegister = {}
+    var callbackRegister = {};
 
     /*----------------------------  Constructor ---------------------*/
+
+    // This constructor is called b/c of the empty-args parens at the
+    // end of the func def:
     this.construct = function() {
-	originHost = window.location.host;
-	ws = new WebSocket("wss://" + originHost + ":" + SCHOOL_BUS_PORT + "/exportClass");
+    	originHost = window.location.host;
+	
+    	// When testing by loading files that use this script,
+    	// the above will be empty; deal with this special case:
+    	if (originHost.length == 0) {
+    	    originHost = "localhost";
+    	}
 
-	ws.onopen = function() {
-	    keepAliveTimer = window.setInterval(function() {sendKeepAlive()}, keepAliveInterval);
-	};
+    	webSocketUrl = "wss://" + originHost + ":" + SCHOOL_BUS_PORT + "/js2schoolBus";
 
-	ws.onclose = function() {
-	    clearInterval(keepAliveTimer);
-	    alert("The browser or server closed the connection, or network trouble; please reload the page to resume.");
-	}
+    	ws = new WebSocket(webSocketUrl);
 
-	ws.onerror = function(evt) {
-	    clearInterval(keepAliveTimer);
-	    //alert("The browser has detected an error while communicating withe the data server: " + evt.data);
-	}
+    	ws.onopen = function() {
+    	    keepAliveTimer = window.setInterval(function() {sendKeepAlive()}, keepAliveInterval);
+    	};
 
-	ws.onmessage = function(evt) {
+    	ws.onclose = function() {
+    	    clearInterval(keepAliveTimer);
+    	    alert("The browser or server closed the connection, or network trouble; please reload the page to resume.");
+    	}
+
+    	ws.onerror = function(evt) {
+    	    clearInterval(keepAliveTimer);
+    	    //alert("The browser has detected an error while communicating withe the data server: " + evt.data);
+    	}
+
+    	ws.onmessage = function(evt) {
 	    
-	    /**
-	     Internalize the JSON
-	     e.g. {"id"      : "a453a...", 
-	           "type"    : "resp", 
-	           "status"  : "OK",
-	           "time"    : "2015-06-20T15:30...",
-		   "content" : {"x" : "10", "y" : "20"}
+    	    /**
+    	     Internalize the JSON
+    	     e.g. {"id"      : "a453a...", 
+    	           "type"    : "resp", 
+    	           "status"  : "OK",
+    	           "time"    : "2015-06-20T15:30...",
+    		   "content" : {"x" : "10", "y" : "20"}
 
-	     @param {string} JSON with event info
-	    */       
-	    try {
-		var oneLineData = evt.data.replace(/(\r\n|\n|\r)/gm," ");
-		var argsObj   = JSON.parse(oneLineData);
-		var msgId     = argsObj.id;
-		var msgType   = argsObj.type;
-		var msgStatus = argsObj.status;
-		var content   = argsObj.content;
-	    } catch(err) {
-		alert('Error report from server (' + oneLineData + '): ' + err );
-		return
-	    }
-	    handleResponse(msgId, msgType, msgStatus, msgTime, msgContent);
-	}
+    	     @param {string} JSON with event info
+    	    */       
+    	    try {
+    		var oneLineData = evt.data.replace(/(\r\n|\n|\r)/gm," ");
+    		var argsObj   = JSON.parse(oneLineData);
+    		var msgId     = argsObj.id;
+    		var msgType   = argsObj.type;
+    		var msgStatus = argsObj.status;
+    		var content   = argsObj.content;
+    	    } catch(err) {
+    		alert('Error report from server (' + oneLineData + '): ' + err );
+    		return
+    	    }
+    	    handleResponse(msgId, msgType, msgStatus, msgTime, msgContent);
+    	}
     }();
 
     /*----------------------------  Registering Callbacks ---------------------*/
     
-    var subscribeToTopic(topicName, deliveryCallback, kafkaLiveCheckTimeout=30) {
+    var subscribeToTopic = function(topicName, deliveryCallback, kafkaLiveCheckTimeout) {
+	if (kafkaLiveCheckTimeout === undefind) {
+	    kafkaLiveCheckTimeout = 30;
+	}
 	currRegistrants = callbackRegister[topicName];
-	currRegistrants === undefined {
+	if (currRegistrants === undefined) {
 	    callbackRegister[topicName] = [deliveryCallback];
 	} else {
 	    callbackRegister.push(deliveryCallback);
 	}
     }
 
+    /*----------------------------  Pushlishing to Bus ---------------------*/
+
+    this.publish = function(busMessage, topicName, type) {
+	/**
+	   {'id'   : 'abcd',
+	    'type' : 'req',
+	    'time' : '2015-06-10T23:35:12'
+	   } 
+	*/
+
+	if (type === undefined) {
+	    type = 'req';
+	}
+    
+	msg = {'id'   	 : generateUUID(),
+	       'type' 	 : type,
+	       'time' 	 : new Date().toISOString(),
+	       'topic'   : topicName,
+	       'content' : busMessage
+	      }
+	try {
+	    ws.send(JSON.stringify(msg));
+    	} catch(err) {
+    	    alert('Error while sending (' + JSON.stringify(msg) + '): ' + err );
+    	    return
+    	}
+
+    }
 
     /*----------------------------  Handlers for Msgs from Server ---------------------*/
 
@@ -96,13 +140,17 @@ function SchoolBus() {
     }
 
     var sendKeepAlive = function() {
-	var req = buildRequest("keepAlive", "");
-	ws.send(req);
+	// Send empty msg to topic JS_2_SCHOOL_BUS_ADMIN_TOPIC,
+	// of type 'keepAlive':
+
+	// To debug: don't actually send keep-alive. Uncomment this
+	// when the rest works!!
+	//*************var req = publish("", JS_2_SCHOOL_BUS_ADMIN_TOPIC, "keepAlive");
     }
 
     var forwardReturnVal = function(topic, content) {
 	registrants    = callbackRegister[topic];
-	if registrants === undefined {
+	if (registrants === undefined) {
 	    return;
 	}
 	numRegistrants = registrants.length;
@@ -111,10 +159,20 @@ function SchoolBus() {
 	}
     }
 
+    var generateUUID = function() {
+	var d = new Date().getTime();
+	var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+	    var r = (d + Math.random()*16)%16 | 0;
+	    d = Math.floor(d/16);
+	    return (c=='x' ? r : (r&0x3|0x8)).toString(16);
+	});
+	return uuid;
+    }
 
-}
+} // end class SchoolBus
 
-var bus = new SchoolBus();
+// In your JS code, instantiate bus acces via:
+// var bus = new SchoolBus();
 
 /*
 document.getElementById('listClassesBtn').addEventListener('click', classExporter.evtResolveCourseNames);

@@ -73,20 +73,20 @@ class CoursesGivenQuarter(object):
         'course_listing' is published by anyone on the bus.
         The msgText should have the JSON format:
         
-            {'req_key' : 'abcd'
+            {'id'      : 'abcd'
              'content' : {'academic_year' : '2014',
                           'quarter'       : 'spring'},
              'time'    : '2015-05-27T18:12:22.706204',
                           }           
         
         Response will be of the form:
-            {'resp_key'    : 'abcd',
+            {'id'          : 'abcd',
              'status'      : 'OK'
              'content'     : *****
             }
             
         Or, in case of error:
-            {'resp_key'    : 'abcd',
+            {'id'          : 'abcd',
              'status'      : 'ERROR'
              'content'     : '<error msg'>
             }

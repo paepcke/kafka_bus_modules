@@ -68,7 +68,7 @@ class LearnerAssignmentHistory(object):
     def requestCoursesForQuarter(self, topicName, msgText, msgOffset):
         '''
         This method is called whenever a message in topic
-        'learner_homework_history' is published by anyone on the bus.
+        LearnerAssignmentHistory.module_topic is published by anyone on the bus.
         The msgText should have the JSON format:
         
         
@@ -101,8 +101,8 @@ class LearnerAssignmentHistory(object):
             }
             
         Again, when constructing our response below, we only need to
-        pass the 'content' value to publish(); the id and time are added
-        by publish().
+        pass the 'content', msgId, and msgType values to publish(); 
+        the time is added by publish().
         
         :param topicName: name of topic to which the arriving msg belongs: always learner_homework_history
         :type topicName: string
@@ -112,7 +112,7 @@ class LearnerAssignmentHistory(object):
         :type msgOffset: int
         '''
         try:
-            # Import the message into a dict:
+            # Import the message content field into a dict:
             msgDict = json.loads(msgText)
         except ValueError:
             self.bus.logError('Received msg with invalid wrapping JSON: %s (%s)' % str(msgText))
@@ -123,13 +123,14 @@ class LearnerAssignmentHistory(object):
             reqId = msgDict['id']
         except KeyError:
             self.returnError('NULL', "Error: message type not provided in an incoming request.")
-            self.bus.logError("Message type not provided in %s" % str(msgDict))
+            self.bus.logError("Message ID not provided in %s" % str(msgDict))
             return
 
-        # Must have a learner type == 'req'
+        # Must have a message type == 'req'
         try:
             reqKey = msgDict['type']
             if reqKey != 'req':
+                # If this isn't a request, do nothing:
                 return
         except KeyError:
             self.returnError(reqId, "Error: message type not provided in %s" % str(msgDict))
