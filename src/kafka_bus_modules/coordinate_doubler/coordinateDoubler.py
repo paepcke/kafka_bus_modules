@@ -5,6 +5,7 @@ Created on Jun 12, 2015
 '''
 import functools
 import json
+import logging
 
 from kafka_bus_python.kafka_bus import BusAdapter
 
@@ -36,7 +37,7 @@ class CoordinateDoubler(object):
         
         # Create a BusAdapter instance:
         
-        self.bus = BusAdapter()
+        self.bus = BusAdapter(loggingLevel=logging.INFO)
 
         # Tell the bus that you are interested in the topic 'example_use',
         # and want callbacks to self.exampleDeliveryMethod whenever
@@ -104,7 +105,7 @@ class CoordinateDoubler(object):
             msgDict = json.loads(msgText)
             self.bus.logDebug("CoordDoupler: req %s" % str(msgDict))
         except ValueError:
-            self.bus.logError('Received msg with invalid cursor coordinate JSON info: %s (%s)' % str(msgText))
+            self.bus.logError('Received msg with invalid cursor coordinate JSON info: %s' % str(msgText))
             return
 
         # Must have the msg ID to use in our response:
@@ -129,14 +130,18 @@ class CoordinateDoubler(object):
         # The content field should be legal JSON; make a
         # dict from it:
         try:
-            contentDict = msgDict['content']
+            contentDict = json.loads(msgDict['content'])
         except KeyError:
             self.returnError(reqKey, "Error: no content field provided in %s" % str(msgDict))
             self.bus.logError('Received msg without a content field: %s' % str(msgText))
             return
+        except ValueError:
+            self.returnError(reqKey, "Error: content field did not contain proper JSON %s" % str(msgDict))
+            self.bus.logError('Error: content field did not contain proper JSON : %s' % str(msgText))
+            return
 
         try:
-            (cursorX, cursorY) = (contentDict['cursorX'], contentDict['cursorY'])
+            (cursorX, cursorY) = (int(contentDict['cursorX']), int(contentDict['cursorY']))
         except ValueError:
             self.returnError(reqId, "Error: cursorX and cursorY JSON not (properly) provided in %s" % str(msgDict))
             self.bus.logError('Received msg bad cursorX/cursorY information: %s' % str(msgText))
@@ -145,7 +150,7 @@ class CoordinateDoubler(object):
         # to publish(), and that we specify that the
         # msg ID is to be the same as the incoming request.
         
-        self.bus.publish('{"cursorXx2" : "%d", "cursorYx2" : "%d"}' % (2*cursorX, 2*cursorY),
+        self.bus.publish('{"cursorXx2" : "%s", "cursorYx2" : "%s"}' % (2*cursorX, 2*cursorY),
                          CoordinateDoubler.module_topic,
                          msgType='resp',
                          msgId=reqId)

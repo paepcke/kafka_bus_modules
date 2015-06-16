@@ -21,15 +21,25 @@ function SchoolbusSpeedExperiment() {
     var showDoubleMouseXY = function(cursorX, cursorY) {
 	//document.getElementById('doubleMouseX').value = cursorX;
 	//document.getElementById('doubleMouseY').value = cursorY;
-	bus.publish('{"cursorX" : "' + cursorX  + '" , "cursorY" : "' + cursorY + '"}', 'coord_doubling');
+	bus.publish('{"cursorX" : "' + cursorX  + '" , "cursorY" : "' + cursorY + '"}', // Msg
+		    'coord_doubling',
+		    {"sync" : "true"}
+		   );
+    }
+
+    this.receiveDoubleCursor = function(topic, content)  {
+	contentObj = JSON.parse(content);
+	document.getElementById('doubleMouseX').value = contentObj.cursorXx2;
+	document.getElementById('doubleMouseY').value = contentObj.cursorYx2;
     }
 
     // var startLocalCursorTracking = function() {
-	
     // }
 
 }
 
+
 busExperiment = new SchoolbusSpeedExperiment();
+bus.subscribeToTopic('coord_doubling', busExperiment.receiveDoubleCursor);
 
 document.addEventListener('mousemove', busExperiment.fillMouseFields);

@@ -66,23 +66,25 @@ function SchoolBus() {
     	    */       
     	    try {
     		var oneLineData = evt.data.replace(/(\r\n|\n|\r)/gm," ");
-    		var argsObj   = JSON.parse(oneLineData);
-    		var msgId     = argsObj.id;
-    		var msgType   = argsObj.type;
-    		var msgStatus = argsObj.status;
-    		var content   = argsObj.content;
+    		var argsObj    	= JSON.parse(oneLineData);
+    		var msgId      	= argsObj.id;
+    		var msgType    	= argsObj.type;
+    		var msgStatus  	= argsObj.status;
+    		var msgTime    	= argsObj.time;
+    		var msgContent 	= argsObj.content;
+		var msgTopic    = argsObj.topic;
     	    } catch(err) {
     		alert('Error report from server (' + oneLineData + '): ' + err );
     		return
     	    }
-    	    handleResponse(msgId, msgType, msgStatus, msgTime, msgContent);
+    	    handleResponse(msgTopic, msgId, msgType, msgStatus, msgTime, msgContent);
     	}
     }();
 
     /*----------------------------  Registering Callbacks ---------------------*/
     
-    var subscribeToTopic = function(topicName, deliveryCallback, kafkaLiveCheckTimeout) {
-	if (kafkaLiveCheckTimeout === undefind) {
+    this.subscribeToTopic = function(topicName, deliveryCallback, kafkaLiveCheckTimeout) {
+	if (kafkaLiveCheckTimeout === undefined) {
 	    kafkaLiveCheckTimeout = 30;
 	}
 	currRegistrants = callbackRegister[topicName];
@@ -95,23 +97,53 @@ function SchoolBus() {
 
     /*----------------------------  Pushlishing to Bus ---------------------*/
 
-    this.publish = function(busMessage, topicName, type) {
+    this.publish = function(busMessage, 
+			    topicName,
+			    optionObj) {
 	/**
-	   {'id'   : 'abcd',
-	    'type' : 'req',
-	    'time' : '2015-06-10T23:35:12'
-	   } 
+	   Publishes one message to the SchoolBus, given the message's
+	   'content' field, and the topic name. Optionally, a JSON
+	   object may be passed to determine the message's type field
+	   value, and whether the message will be treated on the
+	   SchoolBus as synchronous.
+
+	   @param busMessage: the content field of the outgoing
+	      message. This string will often be valid JSON, but
+	      does not need to be: depends on the topic subscriber's
+	      expectations.
+	   @type busMessage: string
+	   @param topicName: the Kafka topic to publish to
+	   @type topicName: string
+	   @param optionObj: a JSON object containing options for
+	      the sending process. Valid fields are:
+	          "type" : {"req" | "resp" | "keep-alive"}
+		  "sync" : {"1" | "0"}
+	   
 	*/
 
-	if (type === undefined) {
+	if (optionObj === undefined) {
 	    type = 'req';
+	    sync = 'False';
+	} else {
+	    // Establish default values for all options:
+	    type = "req";
+	    sync = "False";
+
+	    // And overwrite them if provided:
+	    if (optionObj.hasOwnProperty('type')) {
+		type = optionObj["type"];
+	    }
+	    if (optionObj.hasOwnProperty('sync')) {
+		sync = optionObj["sync"];
+	    }
 	}
-    
+
 	msg = {'id'   	 : generateUUID(),
 	       'type' 	 : type,
 	       'time' 	 : new Date().toISOString(),
 	       'topic'   : topicName,
-	       'content' : busMessage
+	       'content' : busMessage,
+	       'sync'    : sync
 	      }
 	try {
 	    ws.send(JSON.stringify(msg));
@@ -124,13 +156,13 @@ function SchoolBus() {
 
     /*----------------------------  Handlers for Msgs from Server ---------------------*/
 
-    var handleResponse = function(msgId, msgType, msgStatus, msgTime, msgContent) {
+    var handleResponse = function(msgTopic, msgId, msgType, msgStatus, msgTime, msgContent) {
 	switch (msgType) {
 	case 'resp':
 	    if (msgStatus == "ERROR") {
 		handleReturnedError(msgStatus, msgContent);
 	    } else {
-		forwardReturnVal(content);
+		forwardReturnVal(msgTopic, msgContent);
 	    }
 	    break;
 	default:

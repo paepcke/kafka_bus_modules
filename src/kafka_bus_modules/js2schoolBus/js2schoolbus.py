@@ -10,11 +10,11 @@ import os
 import socket
 from subprocess import CalledProcessError
 import subprocess
+
+from kafka_bus_python.kafka_bus import BusAdapter
 import tornado
 from tornado.httpserver import HTTPServer
 from tornado.websocket import WebSocketHandler
-
-from kafka_bus_python.kafka_bus import BusAdapter
 
 
 class Js2SchoolBus(WebSocketHandler):
@@ -48,8 +48,8 @@ class Js2SchoolBus(WebSocketHandler):
         self.testing = testing
         self.request = request;
 
-        self.loglevel = Js2SchoolBus.LOG_LEVEL_DEBUG
-        #self.loglevel = Js2SchoolBus.LOG_LEVEL_INFO
+        #self.loglevel = Js2SchoolBus.LOG_LEVEL_DEBUG
+        self.loglevel = Js2SchoolBus.LOG_LEVEL_INFO
         #self.loglevel = Js2SchoolBus.LOG_LEVEL_NONE
 
         # Get and remember the fully qualified domain name
@@ -58,7 +58,7 @@ class Js2SchoolBus(WebSocketHandler):
         # might be behind:
         self.FQDN = self.getFQDN()
 
-        self.bus = BusAdapter()
+        self.bus = BusAdapter(loggingLevel=logging.INFO)
 
         # Interval between logging the sending of
         # the heartbeat:
@@ -114,7 +114,12 @@ class Js2SchoolBus(WebSocketHandler):
                 if (syncCall):
                     res = self.bus.publish(requestDict['content'], requestDict['topic'], sync=True, msgId=msgId)
                     self.bus.logDebug("js2schoolbus: about to return result %s" % str(res))
-                    self.write_message(res['content'])
+                    self.write_message(json.dumps({'id'      : msgId,
+                                                   'topic'   : requestDict['topic'],
+                                                   'type'    : 'resp',
+                                                   'time'    : datetime.datetime.now().isoformat(), 
+                                                   'content' : res,
+                                                   }))
                 else:
                     self.bus.publish(requestDict['content'], requestDict['topic'], sync=False, msgId=msgId)
                     return
