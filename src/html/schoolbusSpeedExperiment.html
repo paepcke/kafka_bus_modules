@@ -8,25 +8,35 @@
       body { background-color:#FFF8E8;}
     </style>
     
-    <script src="schoolbus.js"></script>
-    <script src="cursorSpeedExperiment.js"></script>
-
   </head>
   <body>
 
-    <div>
-      <input type="text" id="mouseX" size="5" autofocus="autofocus">
-      <input type="text" id="mouseY" size="5" autofocus="autofocus">
-    </div>
+    <!-- <div> -->
+    <!--   <input type="text" id="mouseX" size="5" autofocus="autofocus"> -->
+    <!--   <input type="text" id="mouseY" size="5" autofocus="autofocus"> -->
+    <!-- </div> -->
+
+    <!-- <div> -->
+    <!--   <input type="text" id="doubleMouseX" size="5" autofocus="autofocus"> -->
+    <!--   <input type="text" id="doubleMouseY" size="5" autofocus="autofocus"> -->
+    <!-- </div> -->
+    <!-- <hr> -->
+    <!-- <div onmousemove="busExperiment.fillMouseFields"> -->
+    <!--   Move mouse over me (in Chrome must hold down a mouse button) -->
+    <!-- </div> -->
 
     <div>
-      <input type="text" id="doubleMouseX" size="5" autofocus="autofocus">
-      <input type="text" id="doubleMouseY" size="5" autofocus="autofocus">
+      <button type="button" id="startButton">Start Experiment</button>
+      <button type="button" id="stopButton">Stop Experiment</button>
+      <button type="button" id="clearDisplay">Clear Display</button>
     </div>
-    <hr>
-    <div onmousemove="busExperiment.fillMouseFields">
-      Move mouse over me (in Chrome must hold down a mouse button)
+    <div id=log>
+      <br>
     </div>
+
+
+    <script src="schoolbus.js"></script>
+    <script src="cursorSpeedExperiment.js"></script>
 
   </body>
 </html>

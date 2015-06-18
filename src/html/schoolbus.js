@@ -12,8 +12,10 @@ function SchoolBus() {
 
     var SCHOOL_BUS_PORT = 6070;
     var JS_2_SCHOOL_BUS_ADMIN_TOPIC = 'js2schoolBusAdmin';
+
     var keepAliveTimer = null;
     var keepAliveInterval = 15000; /* 15 sec*/
+    var WS_CONNECT_TIMEOUT  = 5000;  /*  5 sec*/
     var screenContent = "";
     var source = null;
     var ws = null;
@@ -21,11 +23,19 @@ function SchoolBus() {
     var encryptionPwd = null;
     var callbackRegister = {};
 
+    /*----------------------------  Custom Exceptions ---------------------*/
+
+    this.WebSocketNotReadyExc = function() {
+	this.msg   = "Connection to JavaScript bridge was not ready within " + WS_CONNECT_TIMEOUT + "sec.";
+	this.name  = "WebSocketNotReadyExc";
+    }
+
     /*----------------------------  Constructor ---------------------*/
 
     // This constructor is called b/c of the empty-args parens at the
     // end of the func def:
     this.construct = function() {
+
     	originHost = window.location.host;
 	
     	// When testing by loading files that use this script,
@@ -63,7 +73,8 @@ function SchoolBus() {
     		   "content" : {"x" : "10", "y" : "20"}
 
     	     @param {string} JSON with event info
-    	    */       
+    	    */   
+
     	    try {
     		var oneLineData = evt.data.replace(/(\r\n|\n|\r)/gm," ");
     		var argsObj    	= JSON.parse(oneLineData);
@@ -97,9 +108,9 @@ function SchoolBus() {
 
     /*----------------------------  Pushlishing to Bus ---------------------*/
 
-    this.publish = function(busMessage, 
-			    topicName,
-			    optionObj) {
+    this.publish = function (busMessage, 
+			     topicName,
+			     optionObj) {
 	/**
 	   Publishes one message to the SchoolBus, given the message's
 	   'content' field, and the topic name. Optionally, a JSON
@@ -177,7 +188,7 @@ function SchoolBus() {
 
 	// To debug: don't actually send keep-alive. Uncomment this
 	// when the rest works!!
-	//*************var req = publish("", JS_2_SCHOOL_BUS_ADMIN_TOPIC, "keepAlive");
+	var req = publish("", JS_2_SCHOOL_BUS_ADMIN_TOPIC, "keepAlive");
     }
 
     var forwardReturnVal = function(topic, content) {
@@ -199,6 +210,40 @@ function SchoolBus() {
 	    return (c=='x' ? r : (r&0x3|0x8)).toString(16);
 	});
 	return uuid;
+    }
+
+    var waitForWebSocketConnection = function(callback) {
+	/**
+	   Wait max of WS_CONNECT_TIMEOUT msecs until 
+	   Websocket is connected. Not usually needed.
+	 */
+	startTime = new Date().getTime();
+	setTimeout(
+            function () {
+		if (ws.readyState === ws.OPEN) {
+                    console.log("Connection is made")
+                    if(callback !== undefined){
+			callback();
+                    }
+                    return;
+
+		} else {
+                    console.log("wait for connection...")
+		    totalElapsedTime = new Date().getTime() - startTime
+		    if (totalElapsedTime > WS_CONNECT_TIMEOUT) {
+			throw new WebSocketNotReadyExc();
+		    }
+                    waitForSocketConnection(callback);
+		}
+
+            }, 5); // wait 5 milisecond for the connection...
+    }
+
+    /*----------------------------  Miscellaneous ---------------------*/
+
+
+    this.close = function() {
+	ws.close();
     }
 
 } // end class SchoolBus

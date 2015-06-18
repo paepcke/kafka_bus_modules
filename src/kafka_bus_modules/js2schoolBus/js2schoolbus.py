@@ -58,7 +58,8 @@ class Js2SchoolBus(WebSocketHandler):
         # might be behind:
         self.FQDN = self.getFQDN()
 
-        self.bus = BusAdapter(loggingLevel=logging.INFO)
+        self.bus = BusAdapter(loggingLevel=logging.WARN)
+        #self.bus = BusAdapter(loggingLevel=logging.DEBUG)
 
         # Interval between logging the sending of
         # the heartbeat:
@@ -144,7 +145,7 @@ class Js2SchoolBus(WebSocketHandler):
             try:
                 self.write_message(errMsg)
             except IOError as e:
-                self.mainThread.logErr('IOError while writing error to browser; msg attempted to write; "%s" (%s)' % (msg, `e`))
+                self.logErr('IOError while writing error to browser; msg attempted to write; "%s" (%s)' % (msg, `e`))
 
 
     def logInfo(self, msg):

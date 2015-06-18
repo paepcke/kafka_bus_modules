@@ -112,7 +112,7 @@ class CoordinateDoubler(object):
         try:
             reqId = msgDict['id']
         except KeyError:
-            self.returnError('NULL', "Error: message id not provided in an incoming request.")
+            self.bus.returnError('NULL', "Error: message id not provided in an incoming request.")
             self.bus.logError("Message ID not provided in %s" % str(msgDict))
             return
 
@@ -123,7 +123,7 @@ class CoordinateDoubler(object):
                 # Not a request, do nothing:
                 return
         except KeyError:
-            self.returnError(reqId, "Error: message type not provided in %s" % str(msgDict))
+            self.bus.returnError(reqId, "Error: message type not provided in %s" % str(msgDict))
             self.bus.logError('Received msg without a type field: %s' % str(msgText))
             return
         
@@ -132,18 +132,18 @@ class CoordinateDoubler(object):
         try:
             contentDict = json.loads(msgDict['content'])
         except KeyError:
-            self.returnError(reqKey, "Error: no content field provided in %s" % str(msgDict))
+            self.bus.returnError(reqKey, "Error: no content field provided in %s" % str(msgDict))
             self.bus.logError('Received msg without a content field: %s' % str(msgText))
             return
         except ValueError:
-            self.returnError(reqKey, "Error: content field did not contain proper JSON %s" % str(msgDict))
+            self.bus.returnError(reqKey, "Error: content field did not contain proper JSON %s" % str(msgDict))
             self.bus.logError('Error: content field did not contain proper JSON : %s' % str(msgText))
             return
 
         try:
             (cursorX, cursorY) = (int(contentDict['cursorX']), int(contentDict['cursorY']))
         except ValueError:
-            self.returnError(reqId, "Error: cursorX and cursorY JSON not (properly) provided in %s" % str(msgDict))
+            self.bus.returnError(reqId, "Error: cursorX and cursorY JSON not (properly) provided in %s" % str(msgDict))
             self.bus.logError('Received msg bad cursorX/cursorY information: %s' % str(msgText))
 
         # Note that we pass the message type 'resp' 

@@ -8,33 +8,99 @@ var bus = new SchoolBus();
 
 function SchoolbusSpeedExperiment() {
 
-    this.fillMouseFields = function(mouseMoveEvt) {
-	showMouseXY(mouseMoveEvt.pageX, mouseMoveEvt.pageY);
-	showDoubleMouseXY(mouseMoveEvt.pageX, mouseMoveEvt.pageY);
+    // Modify to taste:
+    var NUM_TRIPS_TO_MEASURE = 100;
+    var PUBLISH_SYCHRONOUSLY = true;
+
+    // Locals
+    var roundTrips = 0;
+
+    // Use queue to record start time, so
+    // that we can work with both synchronous
+    // and asychronous publish:
+    var sendTime = [];
+    var msgTravelTime = 0;
+    var cursorX = 10;
+    var cursorY = 20;
+
+    // Arr of msecs/msg results; used
+    // to compute running average:
+    var speedResults = [];
+
+    var keepExperimentRunning = true;
+
+    this.receiveDoubleCursor = function(topic, content)  {
+
+	currTime = new Date().getTime();
+	// Get the send time of the originating
+	// request, and subtract from curr time:
+	msgTravelTime += currTime - sendTime.shift();
+	if (roundTrips >= NUM_TRIPS_TO_MEASURE) {
+	    // Experiment done:
+	    msecsPerAllRounds = msgTravelTime/NUM_TRIPS_TO_MEASURE;
+	    speedResults.push(msecsPerAllRounds);
+	    runningAvg = getRunningAvg();
+	    writeToDisplay("Time for " + roundTrips + " trips: " + msecsPerAllRounds + "ms/msg. Total time: " + msgTravelTime + "ms (running avg: " + runningAvg + ")<br>");
+
+	    msgTravelTime = 0;
+	    roundTrips = 0;
+	    if (keepExperimentRunning) {
+		resetForNewExperiment();
+	    }
+	    return;
+	}
+	// Publish next:
+	sendTime.push(new Date().getTime());
+	bus.publish('{"cursorX" : "' + cursorX  + '" , "cursorY" : "' + cursorY + '"}', // Msg
+		    'coord_doubling',
+		    {"sync" : PUBLISH_SYCHRONOUSLY}
+		   );
+	cursorX += 1;
+	cursorY += 1;
+	roundTrips += 1;
     }
 
-    var showMouseXY = function(cursorX, cursorY) {
-	document.getElementById('mouseX').value = cursorX;
-	document.getElementById('mouseY').value = cursorY;
+    var getRunningAvg = function() {
+	sum = 0;
+	for (i=0;i<speedResults.length;i++) {
+	    sum += speedResults[i];
+	}
+	return sum / speedResults.length;
     }
 
-    var showDoubleMouseXY = function(cursorX, cursorY) {
-	//document.getElementById('doubleMouseX').value = cursorX;
-	//document.getElementById('doubleMouseY').value = cursorY;
+    var resetForNewExperiment = function() {
+
+	msgTravelTime = 0;
+	sendTime      = [];
+	cursorX       = 10;
+	cursorY       = 20;
+	roundTrips    = 0;
+
+	sendTime.push(new Date().getTime());
 	bus.publish('{"cursorX" : "' + cursorX  + '" , "cursorY" : "' + cursorY + '"}', // Msg
 		    'coord_doubling',
 		    {"sync" : "true"}
 		   );
     }
 
-    this.receiveDoubleCursor = function(topic, content)  {
-	contentObj = JSON.parse(content);
-	document.getElementById('doubleMouseX').value = contentObj.cursorXx2;
-	document.getElementById('doubleMouseY').value = contentObj.cursorYx2;
+    var writeToDisplay = function(msg) {
+	document.getElementById('log').innerHTML += msg;
+    }
+    
+    this.clearDisplay = function(msg) {
+	document.getElementById('log').innerHTML = "";
     }
 
-    // var startLocalCursorTracking = function() {
-    // }
+    this.startExperiment = function() {
+        writeToDisplay("<br>Starting experiment...<br>")
+	keepExperimentRunning = true;
+	resetForNewExperiment();
+    }
+
+    this.stopExperiment = function() {
+	keepExperimentRunning = false;
+	writeToDisplay("Stopping experiment...<br>");
+    }
 
 }
 
@@ -42,4 +108,6 @@ function SchoolbusSpeedExperiment() {
 busExperiment = new SchoolbusSpeedExperiment();
 bus.subscribeToTopic('coord_doubling', busExperiment.receiveDoubleCursor);
 
-document.addEventListener('mousemove', busExperiment.fillMouseFields);
+document.getElementById('startButton').addEventListener('click', busExperiment.startExperiment);
+document.getElementById('stopButton').addEventListener('click', busExperiment.stopExperiment);
+document.getElementById('clearDisplay').addEventListener('click', busExperiment.clearDisplay);
