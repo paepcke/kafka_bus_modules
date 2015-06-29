@@ -10,7 +10,7 @@ function SchoolbusSpeedExperiment() {
 
     // Modify to taste:
     var NUM_TRIPS_TO_MEASURE = 100;
-    var PUBLISH_SYCHRONOUSLY = true;
+    var PUBLISH_SYCHRONOUSLY = false;
 
     // Locals
     var roundTrips = 0;

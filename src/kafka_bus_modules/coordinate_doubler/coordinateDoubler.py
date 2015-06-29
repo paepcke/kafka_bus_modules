@@ -7,7 +7,7 @@ import functools
 import json
 import logging
 
-from kafka_bus_python.kafka_bus import BusAdapter
+from kafka_bus import BusAdapter
 
 
 class CoordinateDoubler(object):
